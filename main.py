@@ -53,7 +53,7 @@ def monitor_html():
             pass
     return f'<div class="monitor-bar"><div class="monitor-item monitor-cpu"><div class="monitor-label">CPU</div><div class="monitor-value">{cpu}%</div><div class="monitor-bar-fill" style="width:{cpu}%"></div></div><div class="monitor-item monitor-ram"><div class="monitor-label">RAM</div><div class="monitor-value">{ram}% ({ram_used:.1f}/{ram_total:.1f}G)</div><div class="monitor-bar-fill" style="width:{ram}%"></div></div><div class="monitor-item monitor-gpu"><div class="monitor-label">GPU</div><div class="monitor-value">{gpu_str}</div><div class="monitor-bar-fill" style="width:{gpu_u}%"></div></div><div class="monitor-item monitor-vram"><div class="monitor-label">VRAM</div><div class="monitor-value">{vram_str}</div><div class="monitor-bar-fill" style="width:{vram_pct:.0f}%"></div></div></div>' 
 
-def _do_train(dataset_path, epochs, learning_rate, model_size):
+def _do_train(dataset_path, epochs, learning_rate, model_size, use_pretrained=True, source_model_id="Qwen/Qwen3.5-0.8B"):
     if dataset_path is None:
         yield 'Please upload a JSON dataset file first', gr.update(visible=False), None, None, '', gr.update(interactive=True)
         return
@@ -66,12 +66,26 @@ def _do_train(dataset_path, epochs, learning_rate, model_size):
         tokenizer = CharTokenizer(all_texts)
         yield f'Tokenizer: vocab {tokenizer.vocab_size}', gr.update(visible=False), None, None, '', gr.update(interactive=False)
         from src.config import ModelConfig
-        size_map = {'small': ModelConfig.small(), 'medium': ModelConfig.medium(), 'large': ModelConfig.large()}
-        config = size_map.get(model_size, ModelConfig.small())
+        base_size = model_size.split()[0]  # e.g. 'small (4L-128d)' -> 'small'
+        size_map = {'small': ModelConfig.small(), 'medium': ModelConfig.medium(), 'large': ModelConfig.large(), 'xlarge': ModelConfig.xlarge()}
+        config = size_map.get(base_size, ModelConfig.small())
         dataset = ConversationDataset(list(zip(user_inputs, model_outputs)), tokenizer, config.block_size)
         yield f'Dataset: {len(dataset)} samples ready', gr.update(visible=False), None, None, '', gr.update(interactive=False)
+        # Extract pretrained embeddings (optional)
+        pretrained_weight = None
+        if use_pretrained and source_model_id and source_model_id.strip():
+            yield f'Extracting pretrained embeddings from {source_model_id.strip()}...', gr.update(visible=False), None, None, '', gr.update(interactive=False)
+            try:
+                from src.extract_embeddings import extract_pretrained_embeddings
+                dev = 'cuda' if torch.cuda.is_available() else 'cpu'
+                pretrained_weight = extract_pretrained_embeddings(
+                    source_model_id.strip(), tokenizer, config.n_embd, dev
+                )
+                yield f'Pretrained embeddings ready: vocab={pretrained_weight.shape[0]}, dim={pretrained_weight.shape[1]}', gr.update(visible=False), None, None, '', gr.update(interactive=False)
+            except Exception as ex:
+                yield f'Pretrained extraction failed, using random init: {ex}', gr.update(visible=False), None, None, '', gr.update(interactive=False)
         model = None
-        for progress_msg in train_model_stream(dataset=dataset, tokenizer=tokenizer, epochs=int(epochs), learning_rate=float(learning_rate), batch_size=16, model_size=model_size):
+        for progress_msg in train_model_stream(dataset=dataset, tokenizer=tokenizer, epochs=int(epochs), learning_rate=float(learning_rate), batch_size=16, model_size=base_size, pretrained_embed_weight=pretrained_weight):
             if isinstance(progress_msg, str):
                 if progress_msg.startswith('###'):
                     line = ' '.join(progress_msg.replace('### ', '').splitlines())
@@ -123,14 +137,15 @@ def _chat_fn(message, history, model, tokenizer):
         return
     history.append({"role": "user", "content": message})
     history.append({"role": "assistant", "content": ""})
-    prev_history = history[:-2]
     final_tps = 0.0
     last_yield = time.perf_counter()
     try:
         from transformers import PreTrainedModel
         is_hf = isinstance(model, PreTrainedModel)
         infer_fn = inference_stream_hf if is_hf else inference_stream
-        for acc_text, tps in infer_fn(model, tokenizer, message, history=prev_history, max_new_tokens=256, temperature=0.8, top_k=50):
+        # Custom GPT: only pass current input (history shown in UI only)
+        model_history = history[:-2] if is_hf else []
+        for acc_text, tps in infer_fn(model, tokenizer, message, history=model_history, max_new_tokens=256, temperature=0.8, top_k=50):
             if tps is not None:
                 final_tps = tps
             history[-1]["content"] = acc_text
@@ -185,7 +200,10 @@ def build_ui():
                 with gr.Row(equal_height=True):
                     epochs_slider = gr.Slider(1, 100, value=10, step=1, label='Epochs')
                     lr_slider = gr.Slider(1e-5, 1e-2, value=3e-4, label='Learning Rate')
-                    size_dropdown = gr.Dropdown(choices=['small','medium','large'], value='small', label='Model Size')
+                    size_dropdown = gr.Dropdown(choices=['small (4L-128d)', 'medium (6L-256d)', 'large (8L-512d)', 'xlarge (12L-768d)'], value='small (4L-128d)', label='Model Size')
+                with gr.Row(equal_height=True):
+                    use_pretrained = gr.Checkbox(label='使用预训练 Embedding', value=True)
+                    source_model = gr.Textbox(label='源模型 ID', value='Qwen/Qwen3.5-0.8B', placeholder='e.g. Qwen/Qwen3.5-0.8B', scale=2)
                 train_btn = gr.Button('Start Training', variant='primary', size='lg')
                 progress_box = gr.Textbox(label='Training Log', lines=12, max_lines=12, interactive=False, elem_classes='progress-box')
                 with gr.Group(visible=False, elem_classes='save-panel') as save_panel:
@@ -194,7 +212,7 @@ def build_ui():
                         name_input = gr.Textbox(label='Model Name', placeholder='e.g. my_model', scale=3)
                         save_btn = gr.Button('Save', variant='primary', scale=1)
                     save_status = gr.Markdown('')
-                train_btn.click(fn=_do_train, inputs=[dataset_file, epochs_slider, lr_slider, size_dropdown], outputs=[progress_box, save_panel, model_state, tokenizer_state, name_input, train_btn])
+                train_btn.click(fn=_do_train, inputs=[dataset_file, epochs_slider, lr_slider, size_dropdown, use_pretrained, source_model], outputs=[progress_box, save_panel, model_state, tokenizer_state, name_input, train_btn])
                 save_btn.click(fn=_do_save, inputs=[name_input, model_state, tokenizer_state], outputs=[save_status])
             # ---- Fine-tune ----
             with gr.TabItem('Fine-tune'):
@@ -269,3 +287,5 @@ if __name__ == '__main__':
     print()
     demo = build_ui()
     demo.launch(server_name='127.0.0.1', server_port=int(os.environ.get('GRADIO_SERVER_PORT', 7860)), share=False, inbrowser=True, css=CUSTOM_CSS, theme=gr.themes.Soft())
+
+

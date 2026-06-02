@@ -27,3 +27,7 @@ class ModelConfig:
     @classmethod
     def large(cls) -> 'ModelConfig':
         return cls(n_layer=8, n_head=8, n_embd=512, block_size=512)
+
+    @classmethod
+    def xlarge(cls) -> 'ModelConfig':
+        return cls(n_layer=12, n_head=12, n_embd=768, block_size=768)

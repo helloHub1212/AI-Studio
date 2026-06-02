@@ -13,11 +13,9 @@ from .config import ModelConfig
 from .model import GPT
 from .tokenizer import CharTokenizer
 
-
 # ---------------------------------------------------------------------------
 # Robust model loading -- handles external .pth files with unknown classes
 # ---------------------------------------------------------------------------
-
 class _RobustUnpickler(pickle.Unpickler):
     """An Unpickler that replaces unknown classes with a stub instead of crashing."""
 
@@ -25,10 +23,9 @@ class _RobustUnpickler(pickle.Unpickler):
         try:
             return super().find_class(module, name)
         except (AttributeError, ModuleNotFoundError, ImportError):
-            # Return a stub class so deserialization can continue
+            # Return a stub cclass so deserialization can continue
             stub = type(name, (), {'__module__': module, '__name__': name})
             return stub
-
 
 class _RobustPickleModule:
     """A pickle-compatible module that uses _RobustUnpickler for loading."""
@@ -39,8 +36,6 @@ class _RobustPickleModule:
     PicklingError = pickle.PicklingError
     UnpicklingError = pickle.UnpicklingError
     HIGHEST_PROTOCOL = pickle.HIGHEST_PROTOCOL
-
-
 
 def _count_params(state: dict) -> tuple:
     """Count total parameters and bytes from a state_dict (handles nested dicts)."""
@@ -55,7 +50,6 @@ def _count_params(state: dict) -> tuple:
             params += v.numel()
             param_bytes += v.numel() * v.element_size()
     return params, param_bytes
-
 
 def _detect_hardware() -> dict:
     """Detect available CPU RAM and GPU VRAM."""
@@ -78,7 +72,6 @@ def _detect_hardware() -> dict:
 
     return info
 
-
 def _estimate_full_memory(state: dict) -> dict:
     """Estimate memory needed to load and run inference with this model."""
     params, weight_bytes = _count_params(state)
@@ -93,7 +86,6 @@ def _estimate_full_memory(state: dict) -> dict:
         'inference_gb': inference_gb,
         'inference_fp16_gb': inference_fp16_gb,
     }
-
 
 def _check_memory_feasibility(state: dict) -> tuple:
     """Check if the model can fit in available memory. Returns (ok, message)."""
@@ -129,7 +121,6 @@ def _check_memory_feasibility(state: dict) -> tuple:
         f'> Try: close other apps, use a smaller model, or add more RAM'
     )
     return False, hw_msg
-
 
 def _robust_torch_load(path: str, map_location):
     """Load a .pth file, tolerating unknown classes from external training scripts.
@@ -245,7 +236,6 @@ def _extract_state_dict(loaded) -> dict | None:
         return loaded.state_dict()
     return None
 
-
 def _extract_config(loaded) -> dict | None:
     """Extract a config dict from whatever was loaded."""
     if isinstance(loaded, dict):
@@ -257,13 +247,11 @@ def _extract_config(loaded) -> dict | None:
                     return cfg
     return None
 
-
 # ---------------------------------------------------------------------------
 # File/folder discovery
 # ---------------------------------------------------------------------------
 
 _MODEL_EXTENSIONS = ('.pth', '.pt', '.safetensors', '.bin', '.ckpt')
-
 
 def _find_model_file(path: str) -> str:
     """Given a file or folder path, find the model file to load."""
@@ -292,7 +280,6 @@ def _find_model_file(path: str) -> str:
 
     raise FileNotFoundError(f'Path does not exist: {path}')
 
-
 def _load_config_from_folder(folder: str) -> dict | None:
     """Try to find a config.json in the model folder."""
     cfg_path = os.path.join(folder, 'config.json')
@@ -300,7 +287,6 @@ def _load_config_from_folder(folder: str) -> dict | None:
         with open(cfg_path, 'r', encoding='utf-8') as f:
             return json.load(f)
     return None
-
 
 def _try_load_tokenizer(checkpoint: dict, model_dir: str) -> CharTokenizer | None:
     """Extract tokenizer from checkpoint or find it in model directory."""
@@ -319,7 +305,6 @@ def _try_load_tokenizer(checkpoint: dict, model_dir: str) -> CharTokenizer | Non
                     pass
 
     return None
-
 
 # ---------------------------------------------------------------------------
 # Main load function
@@ -450,7 +435,6 @@ def _infer_config_from_state(state: dict) -> dict | None:
     except Exception:
         return None
 
-
 def _remap_state_keys(state: dict, config: ModelConfig) -> dict:
     """Remap common state_dict key patterns from external models to our format."""
     remapped = {}
@@ -474,7 +458,6 @@ def _remap_state_keys(state: dict, config: ModelConfig) -> dict:
         remapped[new_key] = tensor
 
     return remapped
-
 
 # ---------------------------------------------------------------------------
 # Streaming inference
@@ -540,30 +523,34 @@ def inference_stream_hf(model, tokenizer, prompt: str, history=None, max_new_tok
     tps = tokens_generated[0] / elapsed if elapsed > 0 else 0
     yield ''.join(chunks), tps
 
-
-
 def inference_stream(model: GPT, tokenizer: CharTokenizer, prompt: str,
                      history=None, max_new_tokens: int = 256, temperature: float = 0.8, top_k: int = 50):
-    prompt = prompt.strip().strip('"').strip("'")
+    prompt = prompt.strip().strip('"').strip("'").strip()
 
-    # Build full prompt from conversation history (handles both formats)
+    # Build full prompt in <bos>/<eos> format matching training data
+    # Training format: <bos>user<eos><bos>response<eos>
+    ids = []
+    def _clean_content(t):
+        """Strip <small>... tokens/sec display tag before encoding."""
+        if isinstance(t, str):
+            idx = t.find("\n\n<small")
+            return t[:idx] if idx >= 0 else t
+        return str(t)
     if history:
-        parts = []
         if isinstance(history[0], dict):
             for msg in history:
-                role = "User" if msg["role"] == "user" else "Assistant"
-                parts.append(f"{role}: {msg['content']}")
+                ids.extend(tokenizer.encode(_clean_content(msg.get("content", "")), add_special_tokens=True))
         else:
             for entry in history:
-                parts.append(f"User: {entry[0]}")
+                ids.extend(tokenizer.encode(_clean_content(entry[0]), add_special_tokens=True))
                 if len(entry) > 1 and entry[1]:
-                    parts.append(f"Assistant: {entry[1]}")
-        parts.append(f"User: {prompt}")
-        parts.append("Assistant:")
-        prompt = "\n".join(parts)
+                    ids.extend(tokenizer.encode(_clean_content(entry[1]), add_special_tokens=True))
+    # Current prompt: <bos>user<eos><bos> to trigger response generation
+    ids.extend(tokenizer.encode(prompt, add_special_tokens=True))
+    ids.append(tokenizer.bos_token_id)
+    input_ids = ids
 
     device = model.device
-    input_ids = tokenizer.encode(prompt, add_special_tokens=True)
     idx = torch.tensor([input_ids], dtype=torch.long, device=device)
 
     start_time = time.perf_counter()
@@ -589,7 +576,7 @@ def inference_stream(model: GPT, tokenizer: CharTokenizer, prompt: str,
         ch = itos.get(token_id, unk)
         if not ch:
             continue
-        accumulated_text += ch.replace('~', '\\~')
+        accumulated_text += ch.replace('~', '\\~')  # escape tilde for gradio
         yield accumulated_text, None
 
     elapsed = time.perf_counter() - start_time

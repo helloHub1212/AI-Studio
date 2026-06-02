@@ -19,7 +19,7 @@
 
 ### 功能概览
 
-**从零训练 AI** — 上传 JSON 对话数据集，自动识别字段格式。基于字符级分词器 + GPT 架构 Transformer（含多头注意力），流式展示训练进度，支持自定义轮数、学习率、模型规模。训练完成后保存为 `.pth` 模型文件。
+**从零训练 AI** — 上传 JSON 对话数据集，自动识别字段格式。基于字符级分词器 + GPT 架构 Transformer（含多头注意力），流式展示训练进度，支持自定义轮数、学习率、模型规模。可从 Qwen 等大模型中提取语义 embedding 作为初始知识，显著提升训练效果。训练完成后保存为 `.pth` 模型文件。
 
 **大模型微调** — 从 ModelScope 自动下载开源大模型，支持全量微调和 LoRA 两种模式。由 HuggingFace Trainer 驱动，支持 bf16 混合精度，结果保存为标准 HuggingFace 格式。
 
@@ -91,9 +91,10 @@ python main.py
 ]
 ```
 2. 在 **Train AI** 标签页上传 `.json` 文件
-3. 调整训练轮数 (Epochs)、学习率 (Learning Rate)、模型规模 (small / medium / large)
-4. 点击 **Start Training**，实时查看训练日志
-5. 训练完成后输入模型名称，点击 **Save** 保存到 `./output/`
+3. 调整训练轮数 (Epochs)、学习率 (Learning Rate)、模型规模 (small / medium / large / xlarge)
+4. 默认勾选「使用预训练 Embedding」，从 Qwen3.5-0.8B 提取语义知识初始化模型（可自行指定源模型 ID）
+5. 点击 **Start Training**，实时查看训练日志
+6. 训练完成后输入模型名称，点击 **Save** 保存到 `./output/`
 
 **大模型微调**
 
@@ -122,6 +123,7 @@ ai-studio/
 │   ├── trainer.py       # 从零训练循环 + 流式进度
 │   ├── inference.py     # 模型加载 + 流式推理 + 显存检测
 │   ├── finetune.py      # ModelScope 下载 + HF Trainer 微调
+?   ??? extract_embeddings.py  # ???????? embedding
 │   ├── dataset.py       # JSON 数据集加载 + 格式识别
 │   ├── tokenizer.py     # 字符级分词器
 │   └── config.py        # 模型超参数配置
@@ -145,6 +147,7 @@ ai-studio/
 | Small | 4 | 4 | 128 | 128 |
 | Medium | 6 | 8 | 256 | 256 |
 | Large | 8 | 8 | 512 | 512 |
+| XLarge | 12 | 12 | 768 | 768 |
 
 ### 注意事项
 
@@ -235,9 +238,10 @@ Or double-click `start.bat` (Windows). Opens `http://127.0.0.1:7860` automatical
 ]
 ```
 2. Upload the `.json` file in the **Train AI** tab
-3. Adjust epochs, learning rate, and model size (small / medium / large)
-4. Click **Start Training** and watch real-time progress
-5. Name your model and click **Save** -> stored in `./output/`
+3. Adjust epochs, learning rate, and model size (small / medium / large / xlarge)
+4. Enable "Pretrained Embedding" to initialize from a source model (default: Qwen3.5-0.8B)
+5. Click **Start Training** and watch real-time progress
+6. Name your model and click **Save** -> stored in `./output/`
 
 **Fine-tune**
 
@@ -266,6 +270,7 @@ ai-studio/
 │   ├── trainer.py       # Training loop + streaming progress
 │   ├── inference.py     # Model loading + streaming inference + memory check
 │   ├── finetune.py      # ModelScope download + HF Trainer fine-tuning
+?   ??? extract_embeddings.py  # Pretrained embedding extraction
 │   ├── dataset.py       # JSON dataset loader + format detection
 │   ├── tokenizer.py     # Character-level tokenizer
 │   └── config.py        # Model hyperparameters
@@ -289,6 +294,7 @@ Custom GPT built on Decoder-Only Transformer:
 | Small | 4 | 4 | 128 | 128 |
 | Medium | 6 | 8 | 256 | 256 |
 | Large | 8 | 8 | 512 | 512 |
+| XLarge | 12 | 12 | 768 | 768 |
 
 ### Notes
 

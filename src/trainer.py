@@ -1,4 +1,4 @@
-# trainer.py --- training loop with streaming support
+﻿# trainer.py --- training loop with streaming support
 
 import os
 import time
@@ -31,6 +31,7 @@ def train_model_stream(
     learning_rate: float = 3e-4,
     batch_size: int = 16,
     model_size: str = "small",
+    pretrained_embed_weight: torch.Tensor | None = None,
 ):
     """
     流式训练生成器：每完成一个 epoch 就 yield 进度信息。
@@ -42,6 +43,7 @@ def train_model_stream(
         "small": ModelConfig.small(),
         "medium": ModelConfig.medium(),
         "large": ModelConfig.large(),
+        "xlarge": ModelConfig.xlarge(),
     }
     config = size_map.get(model_size, ModelConfig.small())
     config.vocab_size = tokenizer.vocab_size
@@ -56,7 +58,11 @@ def train_model_stream(
     if max_seq_len > config.block_size:
         config.block_size = max_seq_len
 
-    model = GPT(config).to(device)
+    # 如果传入了预训练 embedding，确保 device 一致
+    if pretrained_embed_weight is not None:
+        pretrained_embed_weight = pretrained_embed_weight.to(device)
+
+    model = GPT(config, pretrained_embed_weight=pretrained_embed_weight).to(device)
     total_params = sum(p.numel() for p in model.parameters())
 
     dataloader = DataLoader(
@@ -71,6 +77,7 @@ def train_model_stream(
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs, eta_min=learning_rate * 0.1)
 
     # ---- 训练配置信息 ----
+    embed_src = f"(pretrained: {pretrained_embed_weight is not None})"
     yield (
         f"## 训练配置\n\n"
         f"- 设备: **{device}**\n"
@@ -81,6 +88,7 @@ def train_model_stream(
         f"- 训练轮数: **{epochs}** | 学习率: **{learning_rate:.1e}** | "
         f"批次大小: **{batch_size}**\n"
         f"- 样本数: **{len(dataset)}** | 每轮步数: **{len(dataloader)}**\n"
+        f"- Embedding 初始化: **{embed_src}**\n"
     )
 
     model.train()

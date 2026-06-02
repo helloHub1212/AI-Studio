@@ -71,7 +71,7 @@ class TransformerBlock(nn.Module):
 
 
 class GPT(nn.Module):
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, pretrained_embed_weight: torch.Tensor | None = None):
         super().__init__()
         self.config = config
         self.transformer = nn.ModuleDict(dict(
@@ -91,6 +91,14 @@ class GPT(nn.Module):
         for pn, p in self.named_parameters():
             if pn.endswith('c_proj.weight'):
                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
+
+        # 用预训练 embedding 初始化 wte / lm_head（若提供）
+        if pretrained_embed_weight is not None:
+            assert pretrained_embed_weight.shape == (config.vocab_size, config.n_embd), \
+                f"pretrained_embed_weight shape mismatch: {pretrained_embed_weight.shape} vs ({config.vocab_size}, {config.n_embd})"
+            with torch.no_grad():
+                # wte.weight == lm_head.weight（权重绑定中），所以一次 copy 同时初始化两者
+                self.transformer.wte.weight.copy_(pretrained_embed_weight.to(self.transformer.wte.weight.device))
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
