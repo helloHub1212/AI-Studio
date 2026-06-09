@@ -34,8 +34,6 @@
 
 ![Train Tab](./docs/tab-train.png)
 
-![Training Demo](./docs/demo-train.gif)
-
 #### 微调大模型
 > 从 ModelScope 下载模型，支持 LoRA / QLoRA / 全量微调
 
@@ -45,8 +43,6 @@
 > 流式逐 token 输出，多轮上下文记忆，显示推理速度
 
 ![Chat Tab](./docs/tab-chat.png)
-
-![Chat Demo](./docs/demo-chat.gif)
 
 #### 性能监控
 > 实时 CPU / RAM / GPU / VRAM 使用率
